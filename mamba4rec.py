@@ -1,8 +1,9 @@
 import torch
 from torch import nn
-from mamba_ssm import Mamba
+# from mamba_ssm import Mamba
 from recbole.model.abstract_recommender import SequentialRecommender
 from recbole.model.loss import BPRLoss
+from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
 class Mamba4Rec(SequentialRecommender):
     def __init__(self, config, dataset):
@@ -25,17 +26,27 @@ class Mamba4Rec(SequentialRecommender):
         self.LayerNorm = nn.LayerNorm(self.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(self.dropout_prob)
         
-        self.mamba_layers = nn.ModuleList([
-            MambaLayer(
-                d_model=self.hidden_size,
-                d_state=self.d_state,
-                d_conv=self.d_conv,
-                expand=self.expand,
-                dropout=self.dropout_prob,
-                num_layers=self.num_layers,
-            ) for _ in range(self.num_layers)
-        ])
+        # self.mamba_layers = nn.ModuleList([
+        #     MambaLayer(
+        #         d_model=self.hidden_size,
+        #         d_state=self.d_state,
+        #         d_conv=self.d_conv,
+        #         expand=self.expand,
+        #         dropout=self.dropout_prob,
+        #         num_layers=self.num_layers,
+        #     ) for _ in range(self.num_layers)
+        # ])
         
+        self.transformer_layer = TransformerEncoderLayer(
+            d_model=self.hidden_size,
+            nhead=2,   
+        )
+
+        self.transformer_encoder = TransformerEncoder(
+            self.transformer_layer,
+            num_layers=self.num_layers,
+        )
+
         if self.loss_type == "BPR":
             self.loss_fct = BPRLoss()
         elif self.loss_type == "CE":
@@ -59,8 +70,10 @@ class Mamba4Rec(SequentialRecommender):
         item_emb = self.dropout(item_emb)
         item_emb = self.LayerNorm(item_emb)
         
-        for i in range(self.num_layers):
-            item_emb = self.mamba_layers[i](item_emb)
+        # for i in range(self.num_layers):
+        #     item_emb = self.mamba_layers[i](item_emb)
+
+        item_emb = self.transformer_encoder(item_emb)
         
         seq_output = self.gather_indexes(item_emb, item_seq_len - 1)
         return seq_output
@@ -103,46 +116,46 @@ class Mamba4Rec(SequentialRecommender):
         )  # [B, n_items]
         return scores
     
-class MambaLayer(nn.Module):
-    def __init__(self, d_model, d_state, d_conv, expand, dropout, num_layers):
-        super().__init__()
-        self.num_layers = num_layers
-        self.mamba = Mamba(
-                # This module uses roughly 3 * expand * d_model^2 parameters
-                d_model=d_model,
-                d_state=d_state,
-                d_conv=d_conv,
-                expand=expand,
-            )
-        self.dropout = nn.Dropout(dropout)
-        self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
-        self.ffn = FeedForward(d_model=d_model, inner_size=d_model*4, dropout=dropout)
+# class MambaLayer(nn.Module):
+#     def __init__(self, d_model, d_state, d_conv, expand, dropout, num_layers):
+#         super().__init__()
+#         self.num_layers = num_layers
+#         self.mamba = Mamba(
+#                 # This module uses roughly 3 * expand * d_model^2 parameters
+#                 d_model=d_model,
+#                 d_state=d_state,
+#                 d_conv=d_conv,
+#                 expand=expand,
+#             )
+#         self.dropout = nn.Dropout(dropout)
+#         self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
+#         self.ffn = FeedForward(d_model=d_model, inner_size=d_model*4, dropout=dropout)
     
-    def forward(self, input_tensor):
-        hidden_states = self.mamba(input_tensor)
-        if self.num_layers == 1:        # one Mamba layer without residual connection
-            hidden_states = self.LayerNorm(self.dropout(hidden_states))
-        else:                           # stacked Mamba layers with residual connections
-            hidden_states = self.LayerNorm(self.dropout(hidden_states) + input_tensor)
-        hidden_states = self.ffn(hidden_states)
-        return hidden_states
+#     def forward(self, input_tensor):
+#         hidden_states = self.mamba(input_tensor)
+#         if self.num_layers == 1:        # one Mamba layer without residual connection
+#             hidden_states = self.LayerNorm(self.dropout(hidden_states))
+#         else:                           # stacked Mamba layers with residual connections
+#             hidden_states = self.LayerNorm(self.dropout(hidden_states) + input_tensor)
+#         hidden_states = self.ffn(hidden_states)
+#         return hidden_states
 
-class FeedForward(nn.Module):
-    def __init__(self, d_model, inner_size, dropout=0.2):
-        super().__init__()
-        self.w_1 = nn.Linear(d_model, inner_size)
-        self.w_2 = nn.Linear(inner_size, d_model)
-        self.activation = nn.GELU()
-        self.dropout = nn.Dropout(dropout)
-        self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
+# class FeedForward(nn.Module):
+#     def __init__(self, d_model, inner_size, dropout=0.2):
+#         super().__init__()
+#         self.w_1 = nn.Linear(d_model, inner_size)
+#         self.w_2 = nn.Linear(inner_size, d_model)
+#         self.activation = nn.GELU()
+#         self.dropout = nn.Dropout(dropout)
+#         self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
 
-    def forward(self, input_tensor):
-        hidden_states = self.w_1(input_tensor)
-        hidden_states = self.activation(hidden_states)
-        hidden_states = self.dropout(hidden_states)
+#     def forward(self, input_tensor):
+#         hidden_states = self.w_1(input_tensor)
+#         hidden_states = self.activation(hidden_states)
+#         hidden_states = self.dropout(hidden_states)
 
-        hidden_states = self.w_2(hidden_states)
-        hidden_states = self.dropout(hidden_states)
-        hidden_states = self.LayerNorm(hidden_states + input_tensor)
+#         hidden_states = self.w_2(hidden_states)
+#         hidden_states = self.dropout(hidden_states)
+#         hidden_states = self.LayerNorm(hidden_states + input_tensor)
 
-        return hidden_states
+#         return hidden_states
