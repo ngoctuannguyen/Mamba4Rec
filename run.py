@@ -16,7 +16,8 @@ from recbole.utils import (
     get_flops,
     get_environment,
 )
-
+import os 
+os.environ["TRITON_F32_DEFAULT"] = "ieee"
 
 if __name__ == '__main__':
 
