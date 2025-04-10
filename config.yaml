@@ -9,7 +9,8 @@ loss_type: 'CE'                 # (str) Type of loss function. Range in ['BPR', 
 
 d_state: 32                     # (int) SSM state expansion factor
 d_conv: 4                       # (int) Local convolution width
-expand: 2                       # (int) Block expansion factor
+expand: 2    
+headdim: 16                   # (int) Block expansion factor
 
 # dataset settings
 # dataset: ml-1m
